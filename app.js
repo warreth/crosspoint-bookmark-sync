@@ -305,15 +305,17 @@ class CrossPointParser {
                 if (!bookmark.summary) {
                     throw new Error(`Bookmark ${index + 1} is missing required field: summary`);
                 }
-                if (bookmark.pp === undefined) {
-                    throw new Error(`Bookmark ${index + 1} is missing required field: pp`);
-                }
 
-                // Return bookmark in normalized format
+                // Convert CrossPoint XPath to standard EPUB CFI format
+                const epubCfi = this.convertCrossPointXPathToCFI(bookmark.xpath, bookmark.si);
+
+                // Return bookmark in normalized format (note: pageNumber set to null to avoid Grimmory 400 data conflict errors)
                 return {
-                    cfi: bookmark.xpath,
+                    cfi: epubCfi,
+                    rawXpath: bookmark.xpath,
                     title: bookmark.summary,
-                    pageNumber: bookmark.pp,
+                    pageNumber: null,
+                    originalPage: bookmark.pp,
                     // Keep original data for reference
                     _original: bookmark
                 };
@@ -328,6 +330,70 @@ class CrossPointParser {
         } catch (error) {
             throw new Error(`Failed to parse file "${file.name}": ${error.message}`);
         }
+    }
+
+    /**
+     * Convert CrossPoint specific XPath to EPUB CFI standard format
+     * @param {string} xpath - The CrossPoint XPath
+     * @param {number} [si] - The spine index from the bookmark
+     * @returns {string} The standard EPUB CFI string
+     */
+    static convertCrossPointXPathToCFI(xpath, si = null) {
+        const docFragMatch = xpath.match(/DocFragment\[(\d+)\]/);
+        
+        let spineIdx;
+        if (si !== null && si !== undefined) {
+            spineIdx = parseInt(si, 10);
+        } else if (docFragMatch) {
+            spineIdx = parseInt(docFragMatch[1], 10) - 1;
+        } else {
+            // Cannot reliably convert without spine index, return original
+            return xpath;
+        }
+
+        // EPUB CFI spine steps usually follow (spineIdx + 1) * 2 logic
+        const spineStep = (spineIdx + 1) * 2;
+        
+        // Remove the prefix to parse the rest
+        let remainder = xpath.replace(/^\/body\/DocFragment\[\d+\]/, '');
+        
+        // Extract text node info if present (e.g. /text()[2].420)
+        let textOffset = "";
+        const textMatch = remainder.match(/\/text\(\)(?:\[(\d+)\])?(?:\.(\d+))?/);
+        if (textMatch) {
+            const textIdx = textMatch[1] ? parseInt(textMatch[1], 10) : 1;
+            const offset = textMatch[2];
+            
+            // Remove text part from remainder to parse element steps
+            remainder = remainder.substring(0, textMatch.index);
+            
+            // Text nodes are odd-numbered steps in CFI ((index * 2) - 1)
+            const textStep = (textIdx * 2) - 1;
+            textOffset = offset ? `/${textStep}:${offset}` : `/${textStep}`;
+        }
+
+        // Parse HTML element steps (/body -> /4, /div[1] -> /2, /p[5] -> /10)
+        const segments = remainder.split('/').filter(Boolean);
+        const cfiSteps = [];
+        
+        for (const seg of segments) {
+            const m = seg.match(/([a-zA-Z0-9]+)(?:\[(\d+)\])?/);
+            if (!m) continue;
+            
+            const tag = m[1].toLowerCase();
+            const idx = m[2] ? parseInt(m[2], 10) : 1;
+            
+            if (tag === 'body') {
+                cfiSteps.push('4');
+            } else if (tag === 'html') {
+                cfiSteps.push('2');
+            } else {
+                cfiSteps.push((idx * 2).toString());
+            }
+        }
+
+        const pathStr = cfiSteps.length > 0 ? '/' + cfiSteps.join('/') : '';
+        return `epubcfi(/6/${spineStep}!${pathStr}${textOffset})`;
     }
 
     /**
@@ -528,20 +594,20 @@ class SyncEngine {
         // Create a Set of existing CFIs for O(1) lookup
         const existingCFIs = new Set(existingBookmarks.map(b => b.cfi));
         
-        // Also create a Set of title+pageNumber combinations as a secondary check
-        const existingTitlePages = new Set(
-            existingBookmarks.map(b => `${b.title}||${b.pageNumber}`)
+        // Also create a Set of title matches as a secondary check (ignoring pageNumber as we set it to null)
+        const existingTitles = new Set(
+            existingBookmarks.map(b => b.title)
         );
 
         return newBookmarks.filter(bookmark => {
-            // Primary match: check if CFI already exists
+            // Primary match: check if exact EPUB CFI already exists
             if (existingCFIs.has(bookmark.cfi)) {
                 return false;
             }
             
-            // Secondary match: check if title+pageNumber combination exists
-            const titlePage = `${bookmark.title}||${bookmark.pageNumber}`;
-            if (existingTitlePages.has(titlePage)) {
+            // Secondary match: check if the exact text already exists
+            // This prevents uploading the exact same quote twice if CFI parsing differs slightly
+            if (existingTitles.has(bookmark.title)) {
                 return false;
             }
 
