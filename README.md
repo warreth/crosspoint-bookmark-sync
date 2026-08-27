@@ -58,4 +58,4 @@ If this tool has saved you time or improved your reading workflow, please consid
 
 ## License
 
-Distributed under the MIT License. See `LICENSE` for more information.
+Distributed under the AGPLv3 License. See `LICENSE` for more information.
