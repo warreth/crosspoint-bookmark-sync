@@ -227,54 +227,47 @@
                     </div>
                     
                     <!-- Advanced Settings -->
-                    <div class="mt-6 p-4 bg-slate-50 border border-slate-200 rounded-lg">
-                        <h4 class="text-sm font-semibold text-slate-700 mb-3 flex items-center">
-                            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-                            Sync Settings
+                    <div class="mt-6 p-5 bg-slate-50 border border-slate-200 rounded-xl space-y-4">
+                        <h4 class="text-sm font-semibold text-slate-800 flex items-center">
+                            <svg class="w-4 h-4 mr-2 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                            Sync Mode
                         </h4>
                         
-                        <div class="space-y-3">
-                            <label class="flex items-start cursor-pointer">
-                                <div class="flex items-center h-5">
-                                    <input type="radio" name="syncMode" id="syncModeHighlight" value="highlight" checked class="w-4 h-4 text-primary border-slate-300 focus:ring-primary">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <!-- Native Bookmark Mode -->
+                            <label class="relative flex flex-col p-4 bg-white border-2 border-slate-200 rounded-xl cursor-pointer hover:border-primary transition-all has-[:checked]:border-primary has-[:checked]:bg-primary/5">
+                                <div class="flex items-center justify-between mb-1">
+                                    <span class="font-semibold text-slate-800 text-sm flex items-center">
+                                        🔖 Native Bookmarks
+                                    </span>
+                                    <input type="radio" name="syncMode" id="syncModeBookmark" value="bookmark" checked class="w-4 h-4 text-primary border-slate-300 focus:ring-primary">
                                 </div>
-                                <div class="ml-3 text-sm">
-                                    <span class="font-medium text-slate-700">Create Highlights (Recommended)</span>
-                                    <p class="text-slate-500 mt-1">Creates visible yellow highlights with red bookmark indicators in the EPUB reader.</p>
-                                </div>
+                                <p class="text-xs text-slate-500">Saves as official Grimmory bookmarks. Shows in the reader's Bookmarks tab.</p>
                             </label>
                             
-                            <label class="flex items-start cursor-pointer">
-                                <div class="flex items-center h-5">
-                                    <input type="radio" name="syncMode" id="syncModeBookmark" value="bookmark" class="w-4 h-4 text-primary border-slate-300 focus:ring-primary">
+                            <!-- Highlight Mode -->
+                            <label class="relative flex flex-col p-4 bg-white border-2 border-slate-200 rounded-xl cursor-pointer hover:border-primary transition-all has-[:checked]:border-primary has-[:checked]:bg-primary/5">
+                                <div class="flex items-center justify-between mb-1">
+                                    <span class="font-semibold text-slate-800 text-sm flex items-center">
+                                        🖍️ Text Highlights
+                                    </span>
+                                    <input type="radio" name="syncMode" id="syncModeHighlight" value="highlight" class="w-4 h-4 text-primary border-slate-300 focus:ring-primary">
                                 </div>
-                                <div class="ml-3 text-sm">
-                                    <span class="font-medium text-slate-700">Create Bookmarks Only</span>
-                                    <p class="text-slate-500 mt-1">Navigable positions without visible highlights in the reader.</p>
-                                </div>
+                                <p class="text-xs text-slate-500">Saves as yellow text highlights inside the book content.</p>
+                            </label>
+                        </div>
+                        
+                        <!-- Advanced Toggles -->
+                        <div class="pt-3 border-t border-slate-200 space-y-2">
+                            <label class="flex items-center justify-between cursor-pointer py-1">
+                                <span class="text-xs font-medium text-slate-700">Optimize Reader Navigation (Range CFI)</span>
+                                <input type="checkbox" id="settingFormatRange" checked class="w-4 h-4 text-primary border-slate-300 rounded focus:ring-primary">
                             </label>
                             
-                            <div class="pl-7 pt-2 space-y-2 border-t border-slate-200 mt-3">
-                                <label class="flex items-start cursor-pointer">
-                                    <div class="flex items-center h-5">
-                                        <input type="checkbox" id="settingFormatRange" checked class="w-4 h-4 text-primary border-slate-300 rounded focus:ring-primary">
-                                    </div>
-                                    <div class="ml-3 text-sm">
-                                        <span class="font-medium text-slate-700">Format as Text Ranges</span>
-                                        <p class="text-slate-500 mt-1">Converts point locations to text ranges for better reader compatibility.</p>
-                                    </div>
-                                </label>
-                                
-                                <label class="flex items-start cursor-pointer">
-                                    <div class="flex items-center h-5">
-                                        <input type="checkbox" id="settingIncludePage" class="w-4 h-4 text-primary border-slate-300 rounded focus:ring-primary">
-                                    </div>
-                                    <div class="ml-3 text-sm">
-                                        <span class="font-medium text-slate-700">Include Page Numbers</span>
-                                        <p class="text-slate-500 mt-1">May cause conflicts if multiple bookmarks are on the same page.</p>
-                                    </div>
-                                </label>
-                            </div>
+                            <label class="flex items-center justify-between cursor-pointer py-1">
+                                <span class="text-xs font-medium text-slate-700">Include Fixed Page Numbers (Off = Automatic)</span>
+                                <input type="checkbox" id="settingIncludePage" class="w-4 h-4 text-primary border-slate-300 rounded focus:ring-primary">
+                            </label>
                         </div>
                     </div>
 

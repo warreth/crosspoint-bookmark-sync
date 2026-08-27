@@ -442,10 +442,8 @@ class CrossPointParser {
         const pathStr = cfiSteps.length > 0 ? '/' + cfiSteps.join('/') : '';
         const baseCfi = `epubcfi(/6/${spineStep}!${pathStr}${textOffset})`;
         
-        // If asRange is true, convert point CFI to simple range CFI for highlighting
-        // This makes Grimmory display red highlights in the web reader
+        // Convert point CFI to simple range CFI for reader compatibility
         if (asRange && !baseCfi.includes(',')) {
-            // Transform: epubcfi(...) -> epubcfi(...,/1:0,/1:10)
             return baseCfi.replace(')', ',/1:0,/1:10)');
         }
         
