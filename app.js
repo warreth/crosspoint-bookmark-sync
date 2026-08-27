@@ -307,15 +307,16 @@ class CrossPointParser {
                 }
 
                 // Convert CrossPoint XPath to standard EPUB CFI format
-                const epubCfi = this.convertCrossPointXPathToCFI(bookmark.xpath, bookmark.si);
+                let epubCfi = this.convertCrossPointXPathToCFI(bookmark.xpath, bookmark.si);
 
-                // Return bookmark in normalized format (note: pageNumber set to null to avoid Grimmory 400 data conflict errors)
+                // Return bookmark in normalized format (note: pageNumber set to null by default to avoid Grimmory 400 data conflict errors)
                 return {
                     cfi: epubCfi,
                     rawXpath: bookmark.xpath,
                     title: bookmark.summary,
                     pageNumber: null,
                     originalPage: bookmark.pp,
+                    si: bookmark.si,
                     // Keep original data for reference
                     _original: bookmark
                 };
@@ -336,9 +337,10 @@ class CrossPointParser {
      * Convert CrossPoint specific XPath to EPUB CFI standard format
      * @param {string} xpath - The CrossPoint XPath
      * @param {number} [si] - The spine index from the bookmark
+     * @param {boolean} [asRange] - Whether to format as a range CFI for highlighting
      * @returns {string} The standard EPUB CFI string
      */
-    static convertCrossPointXPathToCFI(xpath, si = null) {
+    static convertCrossPointXPathToCFI(xpath, si = null, asRange = true) {
         const docFragMatch = xpath.match(/DocFragment\[(\d+)\]/);
         
         let spineIdx;
@@ -393,7 +395,16 @@ class CrossPointParser {
         }
 
         const pathStr = cfiSteps.length > 0 ? '/' + cfiSteps.join('/') : '';
-        return `epubcfi(/6/${spineStep}!${pathStr}${textOffset})`;
+        const baseCfi = `epubcfi(/6/${spineStep}!${pathStr}${textOffset})`;
+        
+        // If asRange is true, convert point CFI to simple range CFI for highlighting
+        // This makes Grimmory display red highlights in the web reader
+        if (asRange && !baseCfi.includes(',')) {
+            // Transform: epubcfi(...) -> epubcfi(...,/1:0,/1:10)
+            return baseCfi.replace(')', ',/1:0,/1:10)');
+        }
+        
+        return baseCfi;
     }
 
     /**
@@ -699,6 +710,8 @@ class UIController {
         this.selectedFiles = [];
         this.api = null;
         this.syncEngine = null;
+        this.createdBookmarkIds = []; // Track bookmark IDs for undo
+        this.parsedBookmarks = []; // Store parsed bookmarks for viewer/editor
 
         // Initialize UI
         this.initializeElements();
@@ -739,6 +752,9 @@ class UIController {
         this.fileCount = document.getElementById('fileCount');
         this.startSyncButton = document.getElementById('startSyncButton');
         this.backToCredentials = document.getElementById('backToCredentials');
+        this.viewBookmarksBtn = document.getElementById('viewBookmarksBtn');
+        this.settingFormatRange = document.getElementById('settingFormatRange');
+        this.settingIncludePage = document.getElementById('settingIncludePage');
 
         // Sync progress
         this.syncLog = document.getElementById('syncLog');
@@ -747,6 +763,18 @@ class UIController {
         this.syncCompleteActions = document.getElementById('syncCompleteActions');
         this.syncAnotherButton = document.getElementById('syncAnotherButton');
         this.newSessionButton = document.getElementById('newSessionButton');
+        this.undoSyncButton = document.getElementById('undoSyncButton');
+        this.syncStatsPanel = document.getElementById('syncStatsPanel');
+        this.statProcessed = document.getElementById('statProcessed');
+        this.statSynced = document.getElementById('statSynced');
+        this.statSkipped = document.getElementById('statSkipped');
+        this.statErrors = document.getElementById('statErrors');
+
+        // Bookmarks modal
+        this.bookmarksModal = document.getElementById('bookmarksModal');
+        this.closeBookmarksModal = document.getElementById('closeBookmarksModal');
+        this.modalBookmarksContainer = document.getElementById('modalBookmarksContainer');
+        this.saveBookmarksChanges = document.getElementById('saveBookmarksChanges');
 
         // Progress indicator
         this.progressIndicator = document.getElementById('progressIndicator');
@@ -772,10 +800,21 @@ class UIController {
         this.dropZone.addEventListener('drop', (e) => this.handleDrop(e));
         this.startSyncButton.addEventListener('click', () => this.startSync());
         this.backToCredentials.addEventListener('click', () => this.switchView('credentials'));
+        this.viewBookmarksBtn.addEventListener('click', () => this.openBookmarksModal());
 
         // Sync complete actions
         this.syncAnotherButton.addEventListener('click', () => this.resetForNewSync());
         this.newSessionButton.addEventListener('click', () => this.resetApplication());
+        this.undoSyncButton.addEventListener('click', () => this.undoLastSync());
+
+        // Bookmarks modal
+        this.closeBookmarksModal.addEventListener('click', () => this.closeBookmarksModalHandler());
+        this.saveBookmarksChanges.addEventListener('click', () => this.closeBookmarksModalHandler());
+        this.bookmarksModal.addEventListener('click', (e) => {
+            if (e.target === this.bookmarksModal) {
+                this.closeBookmarksModalHandler();
+            }
+        });
     }
 
     /**
@@ -957,7 +996,7 @@ class UIController {
     /**
      * Process and validate selected files
      */
-    processFiles(files) {
+    async processFiles(files) {
         if (files.length === 0) return;
 
         const validation = CrossPointParser.validateFiles(files);
@@ -973,6 +1012,22 @@ class UIController {
 
         // Store valid files
         this.selectedFiles = validation.valid;
+        
+        // Parse all files to populate parsedBookmarks for preview
+        this.parsedBookmarks = [];
+        for (const file of this.selectedFiles) {
+            try {
+                const parsed = await CrossPointParser.parseFile(file);
+                this.parsedBookmarks.push(...parsed.bookmarks.map(bm => ({
+                    ...bm,
+                    fileName: file.name,
+                    bookTitle: parsed.bookTitle
+                })));
+            } catch (error) {
+                console.error(`Failed to parse ${file.name}:`, error);
+            }
+        }
+        
         this.renderFileList();
     }
 
@@ -1038,22 +1093,61 @@ class UIController {
 
         this.switchView('syncProgress');
         this.updateProgressIndicator(3);
+        this.syncStatsPanel.classList.remove('hidden');
+        this.createdBookmarkIds = []; // Reset for new sync
+
+        // Get user settings
+        const useRangeCfi = this.settingFormatRange.checked;
+        const includePageNumber = this.settingIncludePage.checked;
 
         // Initialize sync engine
         this.syncEngine = new SyncEngine(this.api, (type, message) => {
             this.addLogEntry(type, message);
         });
 
+        // Update SyncEngine to track created IDs
+        const originalCreateBookmark = this.api.createBookmark.bind(this.api);
+        this.api.createBookmark = async (bookmark) => {
+            const result = await originalCreateBookmark(bookmark);
+            if (result && result.id) {
+                this.createdBookmarkIds.push(result.id);
+            }
+            return result;
+        };
+
         // Start sync
         try {
-            await this.syncEngine.syncFiles(
+            // Re-parse files with current settings
+            for (const file of this.selectedFiles) {
+                const parsed = await CrossPointParser.parseFile(file);
+                
+                // Apply settings to bookmarks
+                parsed.bookmarks = parsed.bookmarks.map(bm => {
+                    // Re-generate CFI with range setting
+                    const cfi = CrossPointParser.convertCrossPointXPathToCFI(
+                        bm.rawXpath, 
+                        bm.si, 
+                        useRangeCfi
+                    );
+                    
+                    return {
+                        ...bm,
+                        cfi: cfi,
+                        pageNumber: includePageNumber ? bm.originalPage : null
+                    };
+                });
+            }
+
+            const stats = await this.syncEngine.syncFiles(
                 this.selectedFiles,
                 (current, total) => {
                     const percentage = Math.round((current / total) * 100);
                     this.updateOverallProgress(percentage);
+                    this.updateSyncStats(this.syncEngine.stats);
                 }
             );
 
+            this.updateSyncStats(stats);
             this.addLogEntry('success', '\n✅ ALL DONE! Your bookmarks have been synced successfully.');
             this.syncCompleteActions.classList.remove('hidden');
 
@@ -1063,8 +1157,156 @@ class UIController {
     }
 
     /**
-     * Add a log entry to the sync log
+     * Update sync statistics display
      */
+    updateSyncStats(stats) {
+        this.statProcessed.textContent = `${stats.processedFiles}/${stats.totalFiles}`;
+        this.statSynced.textContent = stats.newBookmarks;
+        this.statSkipped.textContent = stats.skippedBookmarks;
+        this.statErrors.textContent = stats.errors;
+    }
+
+    /**
+     * Undo last sync by deleting all created bookmarks
+     */
+    async undoLastSync() {
+        if (this.createdBookmarkIds.length === 0) {
+            alert('No bookmarks to undo.');
+            return;
+        }
+
+        const confirmed = confirm(
+            `This will delete ${this.createdBookmarkIds.length} bookmark(s) that were just added. Continue?`
+        );
+        
+        if (!confirmed) return;
+
+        this.addLogEntry('warning', '\n↩️  Starting undo operation...');
+        this.undoSyncButton.disabled = true;
+        this.undoSyncButton.textContent = 'Undoing...';
+
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const bookmarkId of this.createdBookmarkIds) {
+            try {
+                const url = `${this.api.baseUrl}/api/v1/bookmarks/${bookmarkId}`;
+                const response = await fetch(url, {
+                    method: 'DELETE',
+                    headers: this.api.getHeaders()
+                });
+
+                if (response.ok || response.status === 404) {
+                    successCount++;
+                } else {
+                    failCount++;
+                    this.addLogEntry('error', `Failed to delete bookmark ${bookmarkId}`);
+                }
+            } catch (error) {
+                failCount++;
+                this.addLogEntry('error', `Error deleting bookmark ${bookmarkId}: ${error.message}`);
+            }
+        }
+
+        this.addLogEntry('success', `✅ Undo complete: ${successCount} deleted, ${failCount} failed`);
+        this.createdBookmarkIds = [];
+        this.undoSyncButton.disabled = false;
+        this.undoSyncButton.textContent = '↩ Undo Sync (Remove Added Bookmarks)';
+        
+        if (successCount > 0) {
+            this.undoSyncButton.classList.add('hidden');
+        }
+    }
+
+    /**
+     * Open bookmarks modal for review/edit
+     */
+    openBookmarksModal() {
+        if (this.parsedBookmarks.length === 0) {
+            alert('No bookmarks to display. Please select files first.');
+            return;
+        }
+
+        this.renderBookmarksModal();
+        this.bookmarksModal.classList.remove('hidden');
+        document.body.style.overflow = 'hidden';
+    }
+
+    /**
+     * Close bookmarks modal
+     */
+    closeBookmarksModalHandler() {
+        this.bookmarksModal.classList.add('hidden');
+        document.body.style.overflow = '';
+    }
+
+    /**
+     * Render bookmarks in modal
+     */
+    renderBookmarksModal() {
+        this.modalBookmarksContainer.innerHTML = '';
+
+        // Group by book/file
+        const grouped = {};
+        this.parsedBookmarks.forEach(bm => {
+            if (!grouped[bm.bookTitle]) {
+                grouped[bm.bookTitle] = [];
+            }
+            grouped[bm.bookTitle].push(bm);
+        });
+
+        Object.entries(grouped).forEach(([bookTitle, bookmarks]) => {
+            const bookSection = document.createElement('div');
+            bookSection.className = 'mb-6';
+            bookSection.innerHTML = `
+                <h4 class="text-lg font-bold text-slate-800 mb-3 flex items-center">
+                    <svg class="w-5 h-5 mr-2 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
+                    ${bookTitle}
+                </h4>
+                <div class="text-xs text-slate-500 mb-3">${bookmarks.length} bookmark(s)</div>
+            `;
+
+            bookmarks.slice(0, 10).forEach((bm, idx) => {
+                const card = document.createElement('div');
+                card.className = 'bg-slate-50 border border-slate-200 rounded-lg p-3 mb-2 hover:bg-slate-100 transition-colors';
+                card.innerHTML = `
+                    <div class="flex justify-between items-start">
+                        <div class="flex-1 min-w-0">
+                            <div class="text-sm text-slate-700 line-clamp-2">${bm.title}</div>
+                            <div class="text-xs text-slate-500 mt-1">Page ${bm.originalPage || 'N/A'}</div>
+                        </div>
+                        <button class="ml-3 text-red-400 hover:text-red-600 text-xs" onclick="uiController.removeBookmarkFromList(${idx}, '${bookTitle}')">
+                            Remove
+                        </button>
+                    </div>
+                `;
+                bookSection.appendChild(card);
+            });
+
+            if (bookmarks.length > 10) {
+                const moreText = document.createElement('div');
+                moreText.className = 'text-sm text-slate-500 text-center py-2';
+                moreText.textContent = `... and ${bookmarks.length - 10} more`;
+                bookSection.appendChild(moreText);
+            }
+
+            this.modalBookmarksContainer.appendChild(bookSection);
+        });
+    }
+
+    /**
+     * Remove a bookmark from the parsed list
+     */
+    removeBookmarkFromList(index, bookTitle) {
+        const bookmarkIndex = this.parsedBookmarks.findIndex(
+            (bm, i) => bm.bookTitle === bookTitle && this.parsedBookmarks.filter(b => b.bookTitle === bookTitle).indexOf(bm) === index
+        );
+        
+        if (bookmarkIndex !== -1) {
+            this.parsedBookmarks.splice(bookmarkIndex, 1);
+            this.renderBookmarksModal();
+        }
+    }
     addLogEntry(type, message) {
         const entry = document.createElement('div');
         entry.className = 'log-entry';
@@ -1098,11 +1340,14 @@ class UIController {
      */
     resetForNewSync() {
         this.selectedFiles = [];
+        this.parsedBookmarks = [];
+        this.createdBookmarkIds = [];
         this.fileInput.value = '';
         this.syncLog.innerHTML = '<div class="text-slate-400">Initializing sync process...</div>';
         this.overallProgressBar.style.width = '0%';
         this.overallProgress.textContent = '0%';
         this.syncCompleteActions.classList.add('hidden');
+        this.syncStatsPanel.classList.add('hidden');
         this.switchView('fileSelection');
         this.updateProgressIndicator(2);
     }
@@ -1114,6 +1359,8 @@ class UIController {
         this.credentials = null;
         this.api = null;
         this.selectedFiles = [];
+        this.parsedBookmarks = [];
+        this.createdBookmarkIds = [];
         this.fileInput.value = '';
         this.credentialsForm.reset();
         this.loadSavedCredentials();
@@ -1121,6 +1368,7 @@ class UIController {
         this.overallProgressBar.style.width = '0%';
         this.overallProgress.textContent = '0%';
         this.syncCompleteActions.classList.add('hidden');
+        this.syncStatsPanel.classList.add('hidden');
         this.switchView('credentials');
         this.updateProgressIndicator(1);
     }
