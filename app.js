@@ -74,7 +74,8 @@ class GrimmoryAPI {
             });
 
             if (!response.ok) {
-                throw new Error(`Login failed: ${response.status} ${response.statusText}`);
+                const errorText = await response.text();
+                throw new Error(`Login failed: ${response.status} ${response.statusText} - ${errorText}`);
             }
 
             const data = await response.json();
@@ -160,7 +161,8 @@ class GrimmoryAPI {
             });
 
             if (!response.ok) {
-                throw new Error(`Search failed: ${response.status} ${response.statusText}`);
+                const errorText = await response.text();
+                throw new Error(`Search failed: ${response.status} ${response.statusText} - ${errorText}`);
             }
 
             const data = await response.json();
@@ -191,7 +193,8 @@ class GrimmoryAPI {
             });
 
             if (!response.ok) {
-                throw new Error(`Failed to fetch bookmarks: ${response.status} ${response.statusText}`);
+                const errorText = await response.text();
+                throw new Error(`Failed to fetch bookmarks: ${response.status} ${response.statusText} - ${errorText}`);
             }
 
             const bookmarks = await response.json();
@@ -221,12 +224,54 @@ class GrimmoryAPI {
             });
 
             if (!response.ok) {
-                throw new Error(`Failed to create bookmark: ${response.status} ${response.statusText}`);
+                const errorText = await response.text();
+                throw new Error(`Failed to create bookmark: ${response.status} - ${errorText}`);
             }
 
             return await response.json();
         } catch (error) {
             throw new Error(`Failed to create bookmark: ${error.message}`);
+        }
+    }
+
+    /**
+     * Create a new annotation (highlight) on the Grimmory server
+     * Annotations create visible highlights in the EPUB reader with red bookmark indicators
+     * @param {Object} annotation - The annotation object to create
+     * @param {number} annotation.bookId - The book ID
+     * @param {string} annotation.cfi - The CFI range location
+     * @param {string} annotation.text - The highlighted text
+     * @param {string} [annotation.color] - Hex color (default: #FFFF00 for yellow)
+     * @param {string} [annotation.style] - Style type (default: "highlight")
+     * @returns {Promise<Object>} The created annotation object
+     * @throws {Error} If the API request fails
+     */
+    async createAnnotation(annotation) {
+        try {
+            const url = `${this.baseUrl}/api/v1/annotations`;
+            const payload = {
+                bookId: annotation.bookId,
+                cfi: annotation.cfi,
+                text: annotation.text,
+                color: annotation.color || '#FFFF00',
+                type: 'HIGHLIGHT',
+                style: annotation.style || 'highlight'
+            };
+            
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: this.getHeaders(),
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Failed to create annotation: ${response.status} - ${errorText}`);
+            }
+
+            return await response.json();
+        } catch (error) {
+            throw new Error(`Failed to create annotation: ${error.message}`);
         }
     }
 
@@ -494,14 +539,18 @@ class SyncEngine {
     /**
      * Sync a single file's bookmarks to Grimmory
      * @param {Object} parsedFile - The parsed file object from CrossPointParser
+     * @param {string} syncMode - 'highlight' or 'bookmark'
+     * @param {boolean} useRangeCfi - Whether to convert to range CFI
+     * @param {boolean} includePageNumber - Whether to include page numbers
      * @returns {Promise<Object>} Sync result with statistics
      */
-    async syncFile(parsedFile) {
+    async syncFile(parsedFile, syncMode = 'highlight', useRangeCfi = true, includePageNumber = false) {
         const { fileName, bookTitle, bookmarks } = parsedFile;
         
         this.log('info', `📄 Processing: ${fileName}`);
         this.log('info', `📖 Book title: ${bookTitle}`);
         this.log('info', `📊 Found ${bookmarks.length} bookmarks in file`);
+        this.log('info', `⚙️  Mode: ${syncMode}, Range: ${useRangeCfi}, Page: ${includePageNumber}`);
 
         try {
             // Step 1: Search for the book
@@ -517,14 +566,34 @@ class SyncEngine {
 
             this.log('success', `✅ Found book: "${book.title}" (ID: ${book.id})`);
 
-            // Step 2: Fetch existing bookmarks for deduplication
-            this.log('progress', '📥 Fetching existing bookmarks from Grimmory...');
-            const existingBookmarks = await this.api.getBookmarks(book.id);
-            this.log('info', `📋 Found ${existingBookmarks.length} existing bookmarks`);
+            // Step 2: Fetch existing items for deduplication
+            this.log('progress', '📥 Fetching existing items from Grimmory...');
+            const existingItems = syncMode === 'highlight' 
+                ? await this.api.getBookmarks(book.id) // Use bookmarks for dedup in both modes
+                : await this.api.getBookmarks(book.id);
+            
+            this.log('info', `📋 Found ${existingItems.length} existing items`);
 
-            // Step 3: Compare and filter out duplicates
+            // Step 3: Prepare bookmarks with current settings
+            this.log('progress', '🔄 Preparing bookmarks with current settings...');
+            const preparedBookmarks = bookmarks.map(bm => {
+                // Re-generate CFI with range setting
+                const cfi = CrossPointParser.convertCrossPointXPathToCFI(
+                    bm.rawXpath, 
+                    bm.si, 
+                    useRangeCfi
+                );
+                
+                return {
+                    ...bm,
+                    cfi: cfi,
+                    pageNumber: includePageNumber ? bm.originalPage : null
+                };
+            });
+
+            // Step 4: Compare and filter out duplicates
             this.log('progress', '🔄 Checking for duplicates...');
-            const newBookmarks = this.filterDuplicates(bookmarks, existingBookmarks);
+            const newBookmarks = this.filterDuplicates(preparedBookmarks, existingItems);
             
             const duplicateCount = bookmarks.length - newBookmarks.length;
             if (duplicateCount > 0) {
@@ -532,44 +601,56 @@ class SyncEngine {
             }
             
             if (newBookmarks.length === 0) {
-                this.log('info', `ℹ️  All bookmarks already exist. Nothing to sync.`);
+                this.log('info', `ℹ️  All items already exist. Nothing to sync.`);
                 this.stats.skippedBookmarks += bookmarks.length;
                 return { success: true, newCount: 0, skippedCount: bookmarks.length };
             }
 
-            this.log('success', `✨ ${newBookmarks.length} new bookmark(s) to sync`);
+            this.log('success', `✨ ${newBookmarks.length} new item(s) to sync`);
 
-            // Step 4: Create new bookmarks
-            this.log('progress', `📤 Syncing ${newBookmarks.length} bookmark(s)...`);
+            // Step 5: Create new items
+            this.log('progress', `📤 Syncing ${newBookmarks.length} item(s)...`);
             let successCount = 0;
             let failCount = 0;
 
             for (let i = 0; i < newBookmarks.length; i++) {
                 const bookmark = newBookmarks[i];
                 try {
-                    await this.api.createBookmark({
-                        bookId: book.id,
-                        cfi: bookmark.cfi,
-                        pageNumber: bookmark.pageNumber,
-                        title: bookmark.title
-                    });
+                    if (syncMode === 'highlight') {
+                        // Create annotation (highlight) for visible red markers
+                        await this.api.createAnnotation({
+                            bookId: book.id,
+                            cfi: bookmark.cfi,
+                            text: bookmark.title,
+                            color: '#FFFF00',
+                            style: 'highlight'
+                        });
+                    } else {
+                        // Create bookmark for navigation only
+                        await this.api.createBookmark({
+                            bookId: book.id,
+                            cfi: bookmark.cfi,
+                            pageNumber: bookmark.pageNumber,
+                            title: bookmark.title
+                        });
+                    }
                     successCount++;
-                    this.log('success', `  ✓ Synced bookmark ${i + 1}/${newBookmarks.length}: "${this.truncate(bookmark.title, 60)}"`);
+                    this.log('success', `  ✓ Synced item ${i + 1}/${newBookmarks.length}: "${this.truncate(bookmark.title, 60)}"`);
                 } catch (error) {
                     failCount++;
-                    this.log('error', `  ✗ Failed bookmark ${i + 1}/${newBookmarks.length}: ${error.message}`);
+                    this.log('error', `  ✗ Failed item ${i + 1}/${newBookmarks.length}: ${error.message}`);
                 }
             }
 
-            // Step 5: Verify sync
+            // Step 6: Verify sync
             this.log('progress', '🔍 Verifying sync...');
-            const updatedBookmarks = await this.api.getBookmarks(book.id);
-            const expectedTotal = existingBookmarks.length + successCount;
+            const updatedItems = await this.api.getBookmarks(book.id);
+            const expectedTotal = existingItems.length + successCount;
             
-            if (updatedBookmarks.length >= expectedTotal) {
-                this.log('success', `✅ Verification passed! Total bookmarks: ${updatedBookmarks.length}`);
+            if (updatedItems.length >= expectedTotal) {
+                this.log('success', `✅ Verification passed! Total items: ${updatedItems.length}`);
             } else {
-                this.log('warning', `⚠️  Verification incomplete. Expected ${expectedTotal}, got ${updatedBookmarks.length}`);
+                this.log('warning', `⚠️  Verification incomplete. Expected ${expectedTotal}, got ${updatedItems.length}`);
             }
 
             // Update statistics
@@ -590,6 +671,7 @@ class SyncEngine {
 
         } catch (error) {
             this.log('error', `❌ Error syncing file: ${error.message}`);
+            this.log('error', `Stack trace: ${error.stack}`);
             this.stats.errors++;
             return { success: false, reason: error.message };
         }
@@ -629,10 +711,13 @@ class SyncEngine {
     /**
      * Sync multiple files sequentially
      * @param {Array<File>} files - Array of File objects to sync
+     * @param {string} syncMode - 'highlight' or 'bookmark'
+     * @param {boolean} useRangeCfi - Whether to convert to range CFI
+     * @param {boolean} includePageNumber - Whether to include page numbers
      * @param {Function} progressCallback - Callback for progress updates (current, total)
      * @returns {Promise<Object>} Final statistics
      */
-    async syncFiles(files, progressCallback) {
+    async syncFiles(files, syncMode, useRangeCfi, includePageNumber, progressCallback) {
         this.stats = {
             totalFiles: files.length,
             processedFiles: 0,
@@ -655,10 +740,11 @@ class SyncEngine {
                 this.stats.totalBookmarks += parsedFile.totalBookmarks;
 
                 // Sync the file
-                await this.syncFile(parsedFile);
+                await this.syncFile(parsedFile, syncMode, useRangeCfi, includePageNumber);
                 
             } catch (error) {
                 this.log('error', `❌ Failed to process file "${file.name}": ${error.message}`);
+                this.log('error', `Stack trace: ${error.stack}`);
                 this.stats.errors++;
             }
 
@@ -672,8 +758,8 @@ class SyncEngine {
         this.log('info', '\n📊 SYNC COMPLETE - SUMMARY');
         this.log('info', '─'.repeat(60));
         this.log('info', `✓ Files processed: ${this.stats.processedFiles}/${this.stats.totalFiles}`);
-        this.log('info', `✓ Total bookmarks found: ${this.stats.totalBookmarks}`);
-        this.log('success', `✓ New bookmarks synced: ${this.stats.newBookmarks}`);
+        this.log('info', `✓ Total items found: ${this.stats.totalBookmarks}`);
+        this.log('success', `✓ New items synced: ${this.stats.newBookmarks}`);
         this.log('warning', `⊘ Duplicates skipped: ${this.stats.skippedBookmarks}`);
         if (this.stats.errors > 0) {
             this.log('error', `✗ Errors encountered: ${this.stats.errors}`);
@@ -711,7 +797,9 @@ class UIController {
         this.api = null;
         this.syncEngine = null;
         this.createdBookmarkIds = []; // Track bookmark IDs for undo
+        this.createdAnnotationIds = []; // Track annotation IDs for undo
         this.parsedBookmarks = []; // Store parsed bookmarks for viewer/editor
+        this.logEntries = []; // Store log entries for export
 
         // Initialize UI
         this.initializeElements();
@@ -769,6 +857,8 @@ class UIController {
         this.statSynced = document.getElementById('statSynced');
         this.statSkipped = document.getElementById('statSkipped');
         this.statErrors = document.getElementById('statErrors');
+        this.exportLogsButton = document.getElementById('exportLogsButton');
+        this.syncModeRadios = document.querySelectorAll('input[name="syncMode"]');
 
         // Bookmarks modal
         this.bookmarksModal = document.getElementById('bookmarksModal');
@@ -806,6 +896,7 @@ class UIController {
         this.syncAnotherButton.addEventListener('click', () => this.resetForNewSync());
         this.newSessionButton.addEventListener('click', () => this.resetApplication());
         this.undoSyncButton.addEventListener('click', () => this.undoLastSync());
+        this.exportLogsButton.addEventListener('click', () => this.exportLogs());
 
         // Bookmarks modal
         this.closeBookmarksModal.addEventListener('click', () => this.closeBookmarksModalHandler());
@@ -1087,6 +1178,7 @@ class UIController {
      */
     async startSync() {
         if (this.selectedFiles.length === 0) {
+            this.log('error', '❌ No files selected for sync');
             alert('Please select at least one file to sync.');
             return;
         }
@@ -1095,51 +1187,55 @@ class UIController {
         this.updateProgressIndicator(3);
         this.syncStatsPanel.classList.remove('hidden');
         this.createdBookmarkIds = []; // Reset for new sync
+        this.createdAnnotationIds = []; // Track annotations for undo
+        this.logEntries = []; // Reset log for export
 
         // Get user settings
+        const syncMode = document.querySelector('input[name="syncMode"]:checked').value;
         const useRangeCfi = this.settingFormatRange.checked;
         const includePageNumber = this.settingIncludePage.checked;
+
+        this.log('info', `⚙️  Settings: Mode=${syncMode}, RangeCFI=${useRangeCfi}, PageNumbers=${includePageNumber}`);
 
         // Initialize sync engine
         this.syncEngine = new SyncEngine(this.api, (type, message) => {
             this.addLogEntry(type, message);
+            this.logEntries.push({ type, message, timestamp: new Date().toISOString() });
         });
 
-        // Update SyncEngine to track created IDs
+        // Track created items based on mode
         const originalCreateBookmark = this.api.createBookmark.bind(this.api);
-        this.api.createBookmark = async (bookmark) => {
-            const result = await originalCreateBookmark(bookmark);
-            if (result && result.id) {
-                this.createdBookmarkIds.push(result.id);
-            }
-            return result;
-        };
+        const originalCreateAnnotation = this.api.createAnnotation.bind(this.api);
+
+        if (syncMode === 'bookmark') {
+            this.api.createBookmark = async (bookmark) => {
+                this.log('progress', `  → Creating bookmark at CFI: ${bookmark.cfi.substring(0, 50)}...`);
+                const result = await originalCreateBookmark(bookmark);
+                if (result && result.id) {
+                    this.createdBookmarkIds.push(result.id);
+                    this.log('success', `  ✓ Bookmark created with ID: ${result.id}`);
+                }
+                return result;
+            };
+        } else {
+            this.api.createAnnotation = async (annotation) => {
+                this.log('progress', `  → Creating highlight at CFI: ${annotation.cfi.substring(0, 50)}...`);
+                const result = await originalCreateAnnotation(annotation);
+                if (result && result.id) {
+                    this.createdAnnotationIds.push(result.id);
+                    this.log('success', `  ✓ Highlight created with ID: ${result.id}`);
+                }
+                return result;
+            };
+        }
 
         // Start sync
         try {
-            // Re-parse files with current settings
-            for (const file of this.selectedFiles) {
-                const parsed = await CrossPointParser.parseFile(file);
-                
-                // Apply settings to bookmarks
-                parsed.bookmarks = parsed.bookmarks.map(bm => {
-                    // Re-generate CFI with range setting
-                    const cfi = CrossPointParser.convertCrossPointXPathToCFI(
-                        bm.rawXpath, 
-                        bm.si, 
-                        useRangeCfi
-                    );
-                    
-                    return {
-                        ...bm,
-                        cfi: cfi,
-                        pageNumber: includePageNumber ? bm.originalPage : null
-                    };
-                });
-            }
-
             const stats = await this.syncEngine.syncFiles(
                 this.selectedFiles,
+                syncMode,
+                useRangeCfi,
+                includePageNumber,
                 (current, total) => {
                     const percentage = Math.round((current / total) * 100);
                     this.updateOverallProgress(percentage);
@@ -1148,11 +1244,12 @@ class UIController {
             );
 
             this.updateSyncStats(stats);
-            this.addLogEntry('success', '\n✅ ALL DONE! Your bookmarks have been synced successfully.');
+            this.addLogEntry('success', '\n✅ ALL DONE! Your items have been synced successfully.');
             this.syncCompleteActions.classList.remove('hidden');
 
         } catch (error) {
             this.addLogEntry('error', `\n❌ Sync failed: ${error.message}`);
+            this.log('error', `Stack trace: ${error.stack}`);
         }
     }
 
@@ -1167,30 +1264,36 @@ class UIController {
     }
 
     /**
-     * Undo last sync by deleting all created bookmarks
+     * Undo last sync by deleting all created bookmarks/annotations
      */
     async undoLastSync() {
-        if (this.createdBookmarkIds.length === 0) {
-            alert('No bookmarks to undo.');
+        const totalItems = this.createdBookmarkIds.length + this.createdAnnotationIds.length;
+        
+        if (totalItems === 0) {
+            alert('No items to undo.');
             return;
         }
 
         const confirmed = confirm(
-            `This will delete ${this.createdBookmarkIds.length} bookmark(s) that were just added. Continue?`
+            `This will delete ${totalItems} item(s) that were just added. Continue?`
         );
         
         if (!confirmed) return;
 
         this.addLogEntry('warning', '\n↩️  Starting undo operation...');
+        this.log('info', `Deleting ${this.createdBookmarkIds.length} bookmarks and ${this.createdAnnotationIds.length} annotations`);
         this.undoSyncButton.disabled = true;
         this.undoSyncButton.textContent = 'Undoing...';
 
         let successCount = 0;
         let failCount = 0;
 
+        // Delete bookmarks
         for (const bookmarkId of this.createdBookmarkIds) {
             try {
                 const url = `${this.api.baseUrl}/api/v1/bookmarks/${bookmarkId}`;
+                this.log('progress', `  → Deleting bookmark ID ${bookmarkId}...`);
+                
                 const response = await fetch(url, {
                     method: 'DELETE',
                     headers: this.api.getHeaders()
@@ -1198,9 +1301,10 @@ class UIController {
 
                 if (response.ok || response.status === 404) {
                     successCount++;
+                    this.log('success', `  ✓ Deleted bookmark ${bookmarkId}`);
                 } else {
                     failCount++;
-                    this.addLogEntry('error', `Failed to delete bookmark ${bookmarkId}`);
+                    this.addLogEntry('error', `Failed to delete bookmark ${bookmarkId}: ${response.status}`);
                 }
             } catch (error) {
                 failCount++;
@@ -1208,14 +1312,74 @@ class UIController {
             }
         }
 
+        // Delete annotations
+        for (const annotationId of this.createdAnnotationIds) {
+            try {
+                const url = `${this.api.baseUrl}/api/v1/annotations/${annotationId}`;
+                this.log('progress', `  → Deleting annotation ID ${annotationId}...`);
+                
+                const response = await fetch(url, {
+                    method: 'DELETE',
+                    headers: this.api.getHeaders()
+                });
+
+                if (response.ok || response.status === 404) {
+                    successCount++;
+                    this.log('success', `  ✓ Deleted annotation ${annotationId}`);
+                } else {
+                    failCount++;
+                    this.addLogEntry('error', `Failed to delete annotation ${annotationId}: ${response.status}`);
+                }
+            } catch (error) {
+                failCount++;
+                this.addLogEntry('error', `Error deleting annotation ${annotationId}: ${error.message}`);
+            }
+        }
+
         this.addLogEntry('success', `✅ Undo complete: ${successCount} deleted, ${failCount} failed`);
         this.createdBookmarkIds = [];
+        this.createdAnnotationIds = [];
         this.undoSyncButton.disabled = false;
-        this.undoSyncButton.textContent = '↩ Undo Sync (Remove Added Bookmarks)';
+        this.undoSyncButton.textContent = '↩ Undo Sync (Remove Added Items)';
         
         if (successCount > 0) {
             this.undoSyncButton.classList.add('hidden');
         }
+    }
+
+    /**
+     * Export logs to a downloadable file
+     */
+    exportLogs() {
+        if (!this.logEntries || this.logEntries.length === 0) {
+            alert('No logs to export.');
+            return;
+        }
+
+        const logText = this.logEntries.map(entry => {
+            const timestamp = new Date(entry.timestamp).toLocaleString();
+            return `[${timestamp}] [${entry.type.toUpperCase()}] ${entry.message}`;
+        }).join('\n');
+
+        const blob = new Blob([logText], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `crosspoint-sync-logs-${new Date().toISOString().slice(0, 10)}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        this.addLogEntry('success', '📋 Logs exported successfully!');
+    }
+
+    /**
+     * Internal logging method
+     */
+    log(type, message) {
+        const timestamp = new Date().toLocaleTimeString();
+        console.log(`[${timestamp}] [${type.toUpperCase()}] ${message}`);
     }
 
     /**
@@ -1342,6 +1506,8 @@ class UIController {
         this.selectedFiles = [];
         this.parsedBookmarks = [];
         this.createdBookmarkIds = [];
+        this.createdAnnotationIds = [];
+        this.logEntries = [];
         this.fileInput.value = '';
         this.syncLog.innerHTML = '<div class="text-slate-400">Initializing sync process...</div>';
         this.overallProgressBar.style.width = '0%';
@@ -1361,6 +1527,8 @@ class UIController {
         this.selectedFiles = [];
         this.parsedBookmarks = [];
         this.createdBookmarkIds = [];
+        this.createdAnnotationIds = [];
+        this.logEntries = [];
         this.fileInput.value = '';
         this.credentialsForm.reset();
         this.loadSavedCredentials();
