@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CrossPoint to Grimmory Bookmark Sync</title>
+    
+    <!-- Tailwind CSS CDN - Latest v4.3.3 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Custom Styles -->
+    <link rel="stylesheet" href="styles.css">
+    
+    <!-- Tailwind Configuration -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3b82f6',
+                        secondary: '#8b5cf6',
+                        success: '#10b981',
+                        error: '#ef4444',
+                        warning: '#f59e0b'
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-gradient-to-br from-slate-50 to-slate-100 min-h-screen">
+    
+    <!-- Main Container -->
+    <div class="container mx-auto px-4 py-8 max-w-4xl">
+        
+        <!-- Header -->
+        <header class="text-center mb-12">
+            <div class="flex items-center justify-center mb-4">
+                <svg class="w-12 h-12 text-primary mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"></path>
+                </svg>
+                <h1 class="text-4xl font-bold text-slate-800">CrossPoint → Grimmory</h1>
+            </div>
+            <p class="text-slate-600 text-lg">Sync your CrossPoint e-reader bookmarks to your self-hosted Grimmory server</p>
+        </header>
+
+        <!-- Progress Indicator -->
+        <div id="progressIndicator" class="hidden mb-8">
+            <div class="flex items-center justify-center space-x-4">
+                <div class="flex items-center">
+                    <div class="w-8 h-8 rounded-full flex items-center justify-center step-indicator" data-step="1">
+                        <span class="text-sm font-semibold">1</span>
+                    </div>
+                    <span class="ml-2 text-sm font-medium text-slate-600">Connect</span>
+                </div>
+                <div class="w-12 h-1 bg-slate-300 rounded step-line" data-line="1"></div>
+                <div class="flex items-center">
+                    <div class="w-8 h-8 rounded-full flex items-center justify-center step-indicator" data-step="2">
+                        <span class="text-sm font-semibold">2</span>
+                    </div>
+                    <span class="ml-2 text-sm font-medium text-slate-600">Upload</span>
+                </div>
+                <div class="w-12 h-1 bg-slate-300 rounded step-line" data-line="2"></div>
+                <div class="flex items-center">
+                    <div class="w-8 h-8 rounded-full flex items-center justify-center step-indicator" data-step="3">
+                        <span class="text-sm font-semibold">3</span>
+                    </div>
+                    <span class="ml-2 text-sm font-medium text-slate-600">Sync</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content Card -->
+        <div class="bg-white rounded-2xl shadow-xl overflow-hidden">
+            
+            <!-- View 1: Landing & Credentials -->
+            <div id="credentialsView" class="p-8">
+                <div class="mb-8">
+                    <h2 class="text-2xl font-bold text-slate-800 mb-3">Connect to Your Grimmory Server</h2>
+                    <p class="text-slate-600">Enter your Grimmory server details to begin syncing your bookmarks.</p>
+                </div>
+
+                <form id="credentialsForm" class="space-y-6">
+                    <div>
+                        <label for="serverUrl" class="block text-sm font-semibold text-slate-700 mb-2">
+                            Grimmory Server URL
+                        </label>
+                        <input 
+                            type="url" 
+                            id="serverUrl" 
+                            name="serverUrl" 
+                            placeholder="http://127.0.0.1:34619" 
+                            required
+                            class="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                        >
+                        <p class="mt-2 text-sm text-slate-500">The base URL of your self-hosted Grimmory instance</p>
+                    </div>
+
+                    <div class="border-t border-slate-200 pt-6">
+                        <h3 class="text-sm font-semibold text-slate-700 mb-4">Authentication Method</h3>
+                        
+                        <div class="space-y-4">
+                            <!-- Username/Password Option -->
+                            <div>
+                                <label class="flex items-center cursor-pointer">
+                                    <input 
+                                        type="radio" 
+                                        name="authMethod" 
+                                        value="credentials" 
+                                        checked
+                                        class="w-4 h-4 text-primary"
+                                    >
+                                    <span class="ml-2 text-sm font-medium text-slate-700">Username & Password</span>
+                                </label>
+                                <div class="mt-3 ml-6 space-y-3" id="credentialsFields">
+                                    <div>
+                                        <input 
+                                            type="text" 
+                                            id="username" 
+                                            name="username" 
+                                            placeholder="Enter your username" 
+                                            required
+                                            class="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                                        >
+                                    </div>
+                                    <div>
+                                        <input 
+                                            type="password" 
+                                            id="password" 
+                                            name="password" 
+                                            placeholder="Enter your password" 
+                                            required
+                                            class="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                                        >
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- API Key Option -->
+                            <div>
+                                <label class="flex items-center cursor-pointer">
+                                    <input 
+                                        type="radio" 
+                                        name="authMethod" 
+                                        value="apikey"
+                                        class="w-4 h-4 text-primary"
+                                    >
+                                    <span class="ml-2 text-sm font-medium text-slate-700">API Key</span>
+                                </label>
+                                <div class="mt-3 ml-6 hidden" id="apiKeyFields">
+                                    <input 
+                                        type="password" 
+                                        id="apiKey" 
+                                        name="apiKey" 
+                                        placeholder="Enter your API key" 
+                                        class="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                                    >
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center">
+                        <input 
+                            type="checkbox" 
+                            id="rememberCredentials" 
+                            class="w-4 h-4 text-primary border-slate-300 rounded focus:ring-primary"
+                        >
+                        <label for="rememberCredentials" class="ml-2 text-sm text-slate-600">
+                            Remember my credentials (stored locally in browser)
+                        </label>
+                    </div>
+
+                    <div id="credentialsError" class="hidden bg-error/10 border border-error/20 text-error px-4 py-3 rounded-lg">
+                        <div class="flex items-start">
+                            <svg class="w-5 h-5 mr-2 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path>
+                            </svg>
+                            <span id="credentialsErrorText"></span>
+                        </div>
+                    </div>
+
+                    <button 
+                        type="submit" 
+                        class="w-full bg-primary hover:bg-blue-600 text-white font-semibold py-3 px-6 rounded-lg transition-all transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+                    >
+                        Connect & Continue
+                    </button>
+                </form>
+            </div>
+
+            <!-- View 2: File Selection -->
+            <div id="fileSelectionView" class="hidden p-8">
+                <div class="mb-8">
+                    <button id="backToCredentials" class="text-slate-600 hover:text-slate-800 flex items-center mb-4 transition-colors">
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+                        </svg>
+                        Back to credentials
+                    </button>
+                    <h2 class="text-2xl font-bold text-slate-800 mb-3">Upload CrossPoint Bookmarks</h2>
+                    <p class="text-slate-600">Select your CrossPoint bookmark JSON files to sync with Grimmory.</p>
+                </div>
+
+                <!-- Drag & Drop Zone -->
+                <div 
+                    id="dropZone" 
+                    class="border-3 border-dashed border-slate-300 rounded-xl p-12 text-center hover:border-primary hover:bg-primary/5 transition-all cursor-pointer"
+                >
+                    <svg class="w-16 h-16 mx-auto text-slate-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                    </svg>
+                    <p class="text-lg font-semibold text-slate-700 mb-2">Drag & drop your files here</p>
+                    <p class="text-slate-500 mb-4">or</p>
+                    <label for="fileInput" class="inline-block bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2 px-6 rounded-lg cursor-pointer transition-all">
+                        Browse Files
+                    </label>
+                    <input type="file" id="fileInput" multiple accept=".json" class="hidden">
+                    <p class="text-sm text-slate-500 mt-4">Supports multiple JSON files (e.g., "Author - Book Title.json")</p>
+                </div>
+
+                <!-- Selected Files List -->
+                <div id="selectedFilesContainer" class="hidden mt-6">
+                    <h3 class="text-lg font-semibold text-slate-800 mb-3">Selected Files (<span id="fileCount">0</span>)</h3>
+                    <div id="selectedFilesList" class="space-y-2 max-h-64 overflow-y-auto bg-slate-50 rounded-lg p-4">
+                        <!-- File items will be inserted here -->
+                    </div>
+                    
+                    <!-- Advanced Settings -->
+                    <div class="mt-6 p-5 bg-slate-50 border border-slate-200 rounded-xl space-y-4">
+                        <h4 class="text-sm font-semibold text-slate-800 flex items-center">
+                            <svg class="w-4 h-4 mr-2 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                            Sync Mode
+                        </h4>
+                        
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <!-- Native Bookmark Mode -->
+                            <label class="relative flex flex-col p-4 bg-white border-2 border-slate-200 rounded-xl cursor-pointer hover:border-primary transition-all has-[:checked]:border-primary has-[:checked]:bg-primary/5">
+                                <div class="flex items-center justify-between mb-1">
+                                    <span class="font-semibold text-slate-800 text-sm flex items-center">
+                                        🔖 Native Bookmarks
+                                    </span>
+                                    <input type="radio" name="syncMode" id="syncModeBookmark" value="bookmark" checked class="w-4 h-4 text-primary border-slate-300 focus:ring-primary">
+                                </div>
+                                <p class="text-xs text-slate-500">Saves as official Grimmory bookmarks. Shows in the reader's Bookmarks tab.</p>
+                            </label>
+                            
+                            <!-- Highlight Mode -->
+                            <label class="relative flex flex-col p-4 bg-white border-2 border-slate-200 rounded-xl cursor-pointer hover:border-primary transition-all has-[:checked]:border-primary has-[:checked]:bg-primary/5">
+                                <div class="flex items-center justify-between mb-1">
+                                    <span class="font-semibold text-slate-800 text-sm flex items-center">
+                                        🖍️ Text Highlights
+                                    </span>
+                                    <input type="radio" name="syncMode" id="syncModeHighlight" value="highlight" class="w-4 h-4 text-primary border-slate-300 focus:ring-primary">
+                                </div>
+                                <p class="text-xs text-slate-500">Saves as yellow text highlights inside the book content.</p>
+                            </label>
+                        </div>
+                        
+                        <!-- Advanced Toggles -->
+                        <div class="pt-3 border-t border-slate-200 space-y-2">
+                            <label class="flex items-center justify-between cursor-pointer py-1">
+                                <span class="text-xs font-medium text-slate-700">Optimize Reader Navigation (Range CFI)</span>
+                                <input type="checkbox" id="settingFormatRange" checked class="w-4 h-4 text-primary border-slate-300 rounded focus:ring-primary">
+                            </label>
+                            
+                            <label class="flex items-center justify-between cursor-pointer py-1">
+                                <span class="text-xs font-medium text-slate-700">Include Fixed Page Numbers (Off = Automatic)</span>
+                                <input type="checkbox" id="settingIncludePage" class="w-4 h-4 text-primary border-slate-300 rounded focus:ring-primary">
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="flex space-x-4 mt-6">
+                        <button 
+                            id="viewBookmarksBtn" 
+                            class="flex-1 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold py-3 px-6 rounded-lg transition-all focus:outline-none focus:ring-2 focus:ring-slate-200"
+                        >
+                            View / Edit Bookmarks
+                        </button>
+                        <button 
+                            id="startSyncButton" 
+                            class="flex-1 bg-success hover:bg-green-600 text-white font-semibold py-3 px-6 rounded-lg transition-all transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-success focus:ring-offset-2"
+                        >
+                            Start Sync
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- View 3: Sync Progress -->
+            <div id="syncProgressView" class="hidden p-8">
+                <div class="mb-8">
+                    <h2 class="text-2xl font-bold text-slate-800 mb-3">Syncing Bookmarks</h2>
+                    <p class="text-slate-600">Real-time progress of your bookmark synchronization.</p>
+                </div>
+
+                <!-- Overall Progress Bar -->
+                <div class="mb-6">
+                    <div class="flex justify-between text-sm font-semibold text-slate-700 mb-2">
+                        <span>Overall Progress</span>
+                        <span id="overallProgress">0%</span>
+                    </div>
+                    <div class="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
+                        <div id="overallProgressBar" class="bg-gradient-to-r from-primary to-secondary h-full transition-all duration-300" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <!-- Sync Statistics Panel -->
+                <div id="syncStatsPanel" class="hidden grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                    <div class="bg-slate-50 border border-slate-200 p-4 rounded-xl text-center">
+                        <div class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Processed</div>
+                        <div class="text-2xl font-bold text-slate-800 mt-1" id="statProcessed">0/0</div>
+                    </div>
+                    <div class="bg-green-50 border border-green-200 p-4 rounded-xl text-center">
+                        <div class="text-xs font-semibold text-green-600 uppercase tracking-wider">Synced</div>
+                        <div class="text-2xl font-bold text-green-700 mt-1" id="statSynced">0</div>
+                    </div>
+                    <div class="bg-yellow-50 border border-yellow-200 p-4 rounded-xl text-center">
+                        <div class="text-xs font-semibold text-yellow-600 uppercase tracking-wider">Skipped</div>
+                        <div class="text-2xl font-bold text-yellow-700 mt-1" id="statSkipped">0</div>
+                    </div>
+                    <div class="bg-red-50 border border-red-200 p-4 rounded-xl text-center">
+                        <div class="text-xs font-semibold text-red-600 uppercase tracking-wider">Errors</div>
+                        <div class="text-2xl font-bold text-red-700 mt-1" id="statErrors">0</div>
+                    </div>
+                </div>
+
+                <!-- Sync Log -->
+                <div class="bg-slate-900 rounded-lg p-4 max-h-96 overflow-y-auto font-mono text-sm" id="syncLog">
+                    <div class="text-slate-400">Initializing sync process...</div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div id="syncCompleteActions" class="hidden mt-6 flex flex-col space-y-3">
+                    <div class="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-4">
+                        <button 
+                            id="undoSyncButton" 
+                            class="flex-1 bg-white border border-red-300 hover:bg-red-50 text-red-600 font-semibold py-3 px-6 rounded-lg transition-all"
+                        >
+                            ↩ Undo Sync (Remove Added Items)
+                        </button>
+                        <button 
+                            id="exportLogsButton" 
+                            class="flex-1 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold py-3 px-6 rounded-lg transition-all"
+                        >
+                            📋 Export Logs
+                        </button>
+                    </div>
+                    <div class="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-4">
+                        <button 
+                            id="syncAnotherButton" 
+                            class="flex-1 bg-primary hover:bg-blue-600 text-white font-semibold py-3 px-6 rounded-lg transition-all"
+                        >
+                            Sync More Files
+                        </button>
+                        <button 
+                            id="newSessionButton" 
+                            class="flex-1 bg-slate-600 hover:bg-slate-700 text-white font-semibold py-3 px-6 rounded-lg transition-all"
+                        >
+                            New Session
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Optional: Bookmarks Editor Modal/Panel -->
+        <div id="bookmarksModal" class="hidden fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div class="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[85vh] overflow-hidden flex flex-col">
+                <div class="p-6 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+                    <div>
+                        <h3 class="text-xl font-bold text-slate-800">Review Bookmarks</h3>
+                        <p class="text-sm text-slate-500 mt-1">Review, edit, or delete bookmarks before syncing.</p>
+                    </div>
+                    <button id="closeBookmarksModal" class="text-slate-400 hover:text-slate-600 transition-colors">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+                
+                <div class="p-6 overflow-y-auto flex-1 space-y-4" id="modalBookmarksContainer">
+                    <!-- Bookmark cards will be rendered here dynamically -->
+                </div>
+
+                <div class="p-6 border-t border-slate-200 bg-slate-50 flex justify-end">
+                    <button 
+                        id="saveBookmarksChanges" 
+                        class="bg-primary hover:bg-blue-600 text-white font-semibold py-2 px-6 rounded-lg transition-all"
+                    >
+                        Save Changes
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="mt-8 text-center text-slate-500 text-sm">
+            <p>CrossPoint to Grimmory Bookmark Sync Tool</p>
+            <p class="mt-1">All data is processed locally in your browser. No external servers involved.</p>
+            <p class="mt-3">
+                <a href="https://github.com/sponsors/warreth/" target="_blank" rel="noopener noreferrer" class="text-primary hover:text-blue-600 font-semibold">
+                    ❤️ Sponsor this project on GitHub
+                </a>
+            </p>
+        </footer>
+    </div>
+
+    <!-- Application JavaScript -->
+    <script src="app.js"></script>
+</body>
+</html>
